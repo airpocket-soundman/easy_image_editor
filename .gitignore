@@ -1,5 +1,5 @@
 node_modules/
-www/
-android/
-dist/
+/www/
+/android/
+/dist/
 *.log
