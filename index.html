@@ -221,7 +221,7 @@ const MAX_SIDE = 3200;          // メモリ保護のための最大辺
 const HISTORY_MAX = 6;
 
 /* ---------- バージョン表示・エラー可視化・ネイティブ判定(最優先で実行) ---------- */
-const APP_VER = 'v21';
+const APP_VER = 'v22';
 const CapNative = !!(window.Capacitor && (
   (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   window.Capacitor.isNative ||
@@ -1044,6 +1044,37 @@ $('#modalBack').addEventListener('click', e=>{
 $('#saveDo').addEventListener('click', async ()=>{
   const fmt = $('#saveFmt').value;
   const name = ($('#saveName').value.trim() || 'edited') + (fmt==='png' ? '.png' : '.jpg');
+
+  if (CapNative){                            // ネイティブ版:押した瞬間に一覧へ戻り、変換・保存はすべて裏で実行
+    const source = img;                      // 編集結果のキャンバスを保持
+    finishSave();
+    $('#editorScreen').classList.remove('open');
+    img = null; history = [];
+    pendingRefresh = true;
+    setTimeout(()=>{                         // 保険: 反映漏れがあっても数秒後に再同期
+      if (pendingRefresh){ pendingRefresh = false; refreshNativeLibrary(); }
+    }, 7000);
+    (async ()=>{
+      try{
+        let src = source;
+        if (fmt === 'jpeg'){                 // JPEGは透過不可のため白背景を敷く
+          src = document.createElement('canvas');
+          src.width = source.width; src.height = source.height;
+          const c = src.getContext('2d');
+          c.fillStyle = '#fff'; c.fillRect(0,0,src.width,src.height);
+          c.drawImage(source, 0, 0);
+        }
+        const blob = await new Promise(res=>
+          src.toBlob(res, fmt==='png' ? 'image/png' : 'image/jpeg', 0.92));
+        if (!blob) throw new Error('画像変換に失敗しました');
+        await saveNative(blob, name);
+        pendingRefresh = false;
+        await refreshNativeLibrary();        // 保存完了後にサムネイルへ反映
+      }catch(e){ toast('保存に失敗: ' + ((e && e.message) || e), 6000); }
+    })();
+    return;
+  }
+
   let src = img;
   if (fmt === 'jpeg'){                       // JPEGは透過不可のため白背景を敷く
     src = document.createElement('canvas');
@@ -1055,16 +1086,6 @@ $('#saveDo').addEventListener('click', async ()=>{
   const blob = await new Promise(res=>
     src.toBlob(res, fmt==='png' ? 'image/png' : 'image/jpeg', 0.92));
   if (!blob){ toast('保存に失敗しました'); return; }
-
-  if (CapNative){                            // ネイティブ版:即座に一覧画面へ戻り、保存は裏で実行
-    finishSave();
-    $('#editorScreen').classList.remove('open');   // サムネイル一覧へ戻る
-    img = null; history = [];
-    saveNative(blob, name)
-      .then(()=> refreshNativeLibrary())     // 保存完了後にサムネイルへ反映
-      .catch(e=> toast('保存に失敗: ' + ((e && e.message) || e), 6000));
-    return;
-  }
 
   if (window.showSaveFilePicker){            // PC版Chrome等:フォルダを選んで保存
     try{
