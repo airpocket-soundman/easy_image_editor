@@ -42,8 +42,9 @@
   header.app h1{margin:0;font-size:18px;letter-spacing:.06em;}
   header.app h1 b{color:var(--amber);font-weight:800;}
   header.app span{font-size:11px;color:var(--muted);letter-spacing:.14em;font-family:var(--mono);}
-  #sortSel{margin-left:auto;background:var(--panel2);color:var(--text);border:1px solid var(--line);
-           border-radius:8px;font-size:12px;padding:6px 8px;align-self:center;}
+  #sortBar{display:flex;align-items:center;gap:8px;padding:10px 14px 0;font-size:12px;color:var(--muted);}
+  #sortBar button{padding:6px 13px;font-size:12px;border-radius:99px;}
+  #sortBar button.on{background:var(--amber);border-color:var(--amber);color:#1a1204;font-weight:700;}
   #grid{flex:1;overflow-y:auto;padding:12px;display:grid;
         grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;align-content:start;}
   .thumb{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;
@@ -113,14 +114,13 @@
 <div id="galleryScreen">
   <header class="app">
     <h1>フォト<b>ベンチ</b></h1><span>PHOTO BENCH</span>
-    <select id="sortSel">
-      <option value="added-desc">追加: 新しい順</option>
-      <option value="added-asc">追加: 古い順</option>
-      <option value="name-asc">名前: A→Z</option>
-      <option value="name-desc">名前: Z→A</option>
-      <option value="mtime-desc">撮影/更新: 新しい順</option>
-    </select>
   </header>
+  <div id="sortBar">
+    <span>並び順:</span>
+    <button data-f="added" data-label="追加">追加</button>
+    <button data-f="name" data-label="名前">名前</button>
+    <button data-f="mtime" data-label="日付">日付</button>
+  </div>
   <div id="grid">
     <div id="emptyHint">
       <div class="lens">
@@ -135,7 +135,7 @@
   </div>
   <div id="pickBar">
     <button id="pickBtn" class="primary">写真を選ぶ</button>
-    <input type="file" id="fileInput" accept="image/*" multiple hidden>
+    <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/bmp,image/avif,image/heic,image/heif,image/tiff" multiple hidden>
   </div>
 </div>
 
@@ -272,27 +272,39 @@ function idbDel(id){
 /* 静止画のみ許可(動画・アニメGIF等は除外) */
 const STILL_IMAGE_RE = /^image\/(jpeg|jpg|png|webp|bmp|avif|heic|heif|tiff)$/i;
 
-/* ソート */
+/* ソート(画面内ボタンで切替。同じボタンをもう一度押すと昇順/降順が反転) */
 const SORTS = {
   'added-desc': (a,b)=> b.added - a.added,
   'added-asc' : (a,b)=> a.added - b.added,
   'name-asc'  : (a,b)=> a.name.localeCompare(b.name, 'ja'),
   'name-desc' : (a,b)=> b.name.localeCompare(a.name, 'ja'),
   'mtime-desc': (a,b)=> b.mtime - a.mtime,
+  'mtime-asc' : (a,b)=> a.mtime - b.mtime,
 };
-let sortKey = 'added-desc';
-try{ sortKey = localStorage.getItem('pb-sort') || 'added-desc'; }catch(_){}
-if (!SORTS[sortKey]) sortKey = 'added-desc';
+let sortField = 'added', sortDir = 'desc';
+try{
+  const [f, d] = (localStorage.getItem('pb-sort') || '').split('-');
+  if (SORTS[f + '-' + d]){ sortField = f; sortDir = d; }
+}catch(_){}
 function renderGrid(){
   const grid = $('#grid');
-  for (const it of [...files].sort(SORTS[sortKey])) grid.appendChild(it.el);
+  for (const it of [...files].sort(SORTS[sortField + '-' + sortDir])) grid.appendChild(it.el);
 }
-$('#sortSel').value = sortKey;
-$('#sortSel').addEventListener('change', ()=>{
-  sortKey = $('#sortSel').value;
-  try{ localStorage.setItem('pb-sort', sortKey); }catch(_){}
-  renderGrid();
-});
+function updateSortBar(){
+  document.querySelectorAll('#sortBar button').forEach(b=>{
+    const on = b.dataset.f === sortField;
+    b.classList.toggle('on', on);
+    b.textContent = b.dataset.label + (on ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '');
+  });
+}
+document.querySelectorAll('#sortBar button').forEach(b=> b.addEventListener('click', ()=>{
+  const f = b.dataset.f;
+  if (f === sortField) sortDir = (sortDir === 'desc') ? 'asc' : 'desc';
+  else { sortField = f; sortDir = (f === 'name') ? 'asc' : 'desc'; }
+  try{ localStorage.setItem('pb-sort', sortField + '-' + sortDir); }catch(_){}
+  updateSortBar(); renderGrid();
+}));
+updateSortBar();
 
 function addThumb(file, id, added){
   $('#emptyHint')?.remove();
