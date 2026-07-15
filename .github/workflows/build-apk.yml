@@ -52,7 +52,15 @@ jobs:
           || echo "icon generation skipped"
 
       - name: Build release APK (unsigned)
-        run: cd android && ./gradlew assembleRelease --no-daemon
+        run: |
+          cd android
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon 2>&1 | tee /tmp/gradle.log || {
+            echo "==== ビルドエラー抜粋 ===="
+            grep -nE "^e: |error:|FAILURE:|Caused by|What went wrong" /tmp/gradle.log | head -40 \
+              | while IFS= read -r line; do echo "::error::${line}"; done
+            exit 1
+          }
 
       - name: Sign APK
         run: |
