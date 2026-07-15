@@ -35,6 +35,12 @@ jobs:
       - name: Set minSdk 29
         run: sed -i "s/minSdkVersion = .*/minSdkVersion = 29/" android/variables.gradle
 
+      - name: Set version code / name (ビルド番号を反映)
+        run: |
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"build-${{ github.run_number }}\"/" android/app/build.gradle
+          grep -E "versionCode|versionName" android/app/build.gradle
+
       - name: Generate app icons (Web版と同じデザイン)
         run: >
           npx --yes @capacitor/assets generate --android
@@ -55,13 +61,13 @@ jobs:
           "$BT/zipalign" -f 4 "$UNSIGNED" aligned.apk
           "$BT/apksigner" sign --ks photobench.keystore \
             --ks-pass pass:photobench --ks-key-alias photobench \
-            --out PhotoBench.apk aligned.apk
+            --out "PhotoBench-b${{ github.run_number }}.apk" aligned.apk
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: PhotoBench-apk
-          path: PhotoBench.apk
+          path: PhotoBench-b${{ github.run_number }}.apk
 
       - name: Remove old 'latest' release (one-time cleanup)
         env:
@@ -76,5 +82,5 @@ jobs:
           body: |
             mainブランチの最新コミットから自動ビルドされたAPKです。
             コミット: ${{ github.sha }}
-            スマホでPhotoBench.apkをダウンロードしてインストールしてください。
-          files: PhotoBench.apk
+            スマホで PhotoBench-b${{ github.run_number }}.apk をダウンロードしてインストールしてください。
+          files: PhotoBench-b${{ github.run_number }}.apk
