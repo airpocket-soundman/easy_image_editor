@@ -52,7 +52,9 @@
         grid-template-columns:repeat(var(--cols,3),var(--cell,104px));gap:8px;align-content:start;
         justify-content:space-evenly;}
   .thumb{position:relative;width:var(--cell,104px);height:var(--cell,104px);border-radius:10px;overflow:hidden;
-         border:1px solid var(--line);background:var(--panel2);padding:0;}
+         border:1px solid var(--line);background:var(--panel2);padding:0;
+         user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;}
+  .thumb img{pointer-events:none;}
   .thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
   .thumb figcaption{position:absolute;left:0;right:0;bottom:0;font-size:9px;padding:3px 6px;
         background:linear-gradient(transparent,rgba(0,0,0,.75));color:#dfe3e8;
@@ -219,7 +221,7 @@ const MAX_SIDE = 3200;          // メモリ保護のための最大辺
 const HISTORY_MAX = 6;
 
 /* ---------- バージョン表示・エラー可視化・ネイティブ判定(最優先で実行) ---------- */
-const APP_VER = 'v19';
+const APP_VER = 'v20';
 const CapNative = !!(window.Capacitor && (
   (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   window.Capacitor.isNative ||
@@ -414,20 +416,30 @@ function removeTile(it){
 }
 /* 長押し(500ms)で選択モード、選択モード中はタップで選択切替 */
 function attachThumbHandlers(fig, item, open){
-  let lpTimer = null, lpFired = false;
-  fig.addEventListener('pointerdown', ()=>{
+  let lpTimer = null, lpFired = false, sx = 0, sy = 0;
+  const fire = ()=>{
+    if (lpFired) return;
+    lpFired = true;
+    if (!selectMode) enterSelect(item); else toggleSel(item);
+  };
+  fig.addEventListener('pointerdown', e=>{
     lpFired = false;
+    sx = e.clientX; sy = e.clientY;
     clearTimeout(lpTimer);
-    lpTimer = setTimeout(()=>{
-      lpFired = true;
-      if (!selectMode) enterSelect(item); else toggleSel(item);
-    }, 500);
+    lpTimer = setTimeout(fire, 500);
+  });
+  fig.addEventListener('pointermove', e=>{
+    // 指のわずかな揺れでは解除せず、12px以上動いたら(スクロール)解除
+    if (Math.hypot(e.clientX - sx, e.clientY - sy) > 12) clearTimeout(lpTimer);
   });
   const cancelLp = ()=> clearTimeout(lpTimer);
-  fig.addEventListener('pointermove', cancelLp);   // スクロール中は発火しない
   fig.addEventListener('pointerup', cancelLp);
   fig.addEventListener('pointercancel', cancelLp);
-  fig.addEventListener('contextmenu', e=> e.preventDefault());
+  fig.addEventListener('contextmenu', e=>{   // OS標準の長押しイベントもトリガーに使う
+    e.preventDefault();
+    clearTimeout(lpTimer);
+    fire();
+  });
   fig.addEventListener('click', e=>{
     if (lpFired){ e.preventDefault(); return; }
     if (selectMode){ toggleSel(item); return; }
