@@ -149,6 +149,48 @@ class MediaLibPlugin : Plugin() {
         }
     }
 
+    /* ---------- 複数削除(Android 11+は標準の確認ダイアログを表示) ---------- */
+    @PluginMethod
+    fun remove(call: PluginCall) {
+        val ids = call.getArray("ids")
+        if (ids == null || ids.length() == 0) {
+            call.reject("ids が必要です")
+            return
+        }
+        val uris = ArrayList<android.net.Uri>()
+        try {
+            for (i in 0 until ids.length()) {
+                val id = ids.getString(i).toLong()
+                uris.add(
+                    ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                )
+            }
+        } catch (e: Exception) {
+            call.reject("id が不正です")
+            return
+        }
+        val resolver = context.contentResolver
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                val pi = MediaStore.createDeleteRequest(resolver, uris)
+                activity.startIntentSenderForResult(pi.intentSender, 4471, null, 0, 0, 0)
+                val ret = JSObject()
+                ret.put("requested", true)
+                call.resolve(ret)
+            } catch (e: Exception) {
+                call.reject("削除リクエスト失敗: " + e.message)
+            }
+        } else {
+            var n = 0
+            for (u in uris) {
+                try { n += resolver.delete(u, null, null) } catch (e: Exception) {}
+            }
+            val ret = JSObject()
+            ret.put("deleted", n)
+            call.resolve(ret)
+        }
+    }
+
     /* ---------- 保存(元のフォルダへ。不可なら Pictures/PhotoBench へ) ---------- */
     @PluginMethod
     fun save(call: PluginCall) {

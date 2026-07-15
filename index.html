@@ -64,6 +64,15 @@
         margin:0 auto 14px;display:flex;align-items:center;justify-content:center;color:var(--amber);}
   #pickBar{padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);}
   #pickBtn{width:100%;padding:14px;font-size:16px;}
+  #selBar{display:none;align-items:center;gap:10px;
+          padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);}
+  #selBar.open{display:flex;}
+  #selInfo{flex:1;font-size:14px;color:var(--text);}
+  #selBar button{padding:11px 18px;font-size:14px;}
+  .thumb.sel{outline:3px solid var(--amber);outline-offset:-3px;}
+  .thumb.sel::after{content:'✓';position:absolute;top:4px;left:4px;width:22px;height:22px;
+        border-radius:50%;background:var(--amber);color:#1a1204;font-weight:700;
+        font-size:14px;line-height:22px;text-align:center;}
 
   /* ---------- editor screen ---------- */
   #editorScreen{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;}
@@ -141,6 +150,11 @@
       複数まとめて選ぶと、ここにサムネイルが並びます。
     </div>
   </div>
+  <div id="selBar">
+    <span id="selInfo">0枚選択</span>
+    <button id="selDel" class="primary">削除</button>
+    <button id="selCancel">キャンセル</button>
+  </div>
   <div id="pickBar">
     <button id="pickBtn" class="primary">写真を選ぶ</button>
     <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/bmp,image/avif,image/heic,image/heif,image/tiff" multiple hidden>
@@ -198,7 +212,7 @@ const MAX_SIDE = 3200;          // メモリ保護のための最大辺
 const HISTORY_MAX = 6;
 
 /* ---------- バージョン表示・エラー可視化・ネイティブ判定(最優先で実行) ---------- */
-const APP_VER = 'v15';
+const APP_VER = 'v17';
 const CapNative = !!(window.Capacitor && (
   (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   window.Capacitor.isNative ||
@@ -362,6 +376,80 @@ document.querySelectorAll('.colBtn').forEach(b=> b.addEventListener('click', ()=
 window.addEventListener('resize', updateGridCells);
 updateGridCells();
 
+/* ---------- 複数選択モード(サムネイル長押しで開始) ---------- */
+let selectMode = false;
+let pendingRefresh = false;
+const selected = new Set();
+function enterSelect(item){
+  selectMode = true; selected.clear();
+  $('#selBar').classList.add('open');
+  toggleSel(item);
+}
+function exitSelect(){
+  selectMode = false;
+  for (const it of selected) it.el.classList.remove('sel');
+  selected.clear();
+  $('#selBar').classList.remove('open');
+}
+function toggleSel(item){
+  if (selected.has(item)){ selected.delete(item); item.el.classList.remove('sel'); }
+  else { selected.add(item); item.el.classList.add('sel'); }
+  $('#selInfo').textContent = selected.size + '枚選択';
+  if (!selected.size) exitSelect();
+}
+function removeTile(it){
+  try{ if (typeof thumbObserver !== 'undefined' && thumbObserver) thumbObserver.unobserve(it.el); }catch(_){}
+  if (it.url) URL.revokeObjectURL(it.url);
+  files = files.filter(x=> x !== it);
+  it.el.remove();
+}
+/* 長押し(500ms)で選択モード、選択モード中はタップで選択切替 */
+function attachThumbHandlers(fig, item, open){
+  let lpTimer = null, lpFired = false;
+  fig.addEventListener('pointerdown', ()=>{
+    lpFired = false;
+    clearTimeout(lpTimer);
+    lpTimer = setTimeout(()=>{
+      lpFired = true;
+      if (!selectMode) enterSelect(item); else toggleSel(item);
+    }, 500);
+  });
+  const cancelLp = ()=> clearTimeout(lpTimer);
+  fig.addEventListener('pointermove', cancelLp);   // スクロール中は発火しない
+  fig.addEventListener('pointerup', cancelLp);
+  fig.addEventListener('pointercancel', cancelLp);
+  fig.addEventListener('contextmenu', e=> e.preventDefault());
+  fig.addEventListener('click', e=>{
+    if (lpFired){ e.preventDefault(); return; }
+    if (selectMode){ toggleSel(item); return; }
+    open();
+  });
+}
+$('#selCancel').addEventListener('click', exitSelect);
+$('#selDel').addEventListener('click', async ()=>{
+  if (!selected.size) return;
+  const items = [...selected];
+  if (CapNative){
+    if (!confirm(items.length + '枚を端末から削除しますか?')) return;
+    const ids = items.filter(x=> x.nativeId).map(x=> x.nativeId);
+    try{
+      await MediaLib.remove({ids});
+      pendingRefresh = true;               // 復帰時に一覧を再取得(キャンセル時も整合)
+      exitSelect();
+    }catch(e){ toast('削除に失敗: ' + ((e && e.message) || e)); }
+  } else {
+    if (!confirm(items.length + '枚を一覧から削除しますか?\n(端末内の元ファイルは消えません)')) return;
+    for (const it of items){ if (it.id != null) idbDel(it.id); removeTile(it); }
+    exitSelect();
+  }
+});
+document.addEventListener('visibilitychange', ()=>{
+  if (document.visibilityState === 'visible' && pendingRefresh){
+    pendingRefresh = false;
+    refreshNativeLibrary();
+  }
+});
+
 function addThumb(file, id, added){
   $('#emptyHint')?.remove();
   const url = URL.createObjectURL(file);
@@ -372,7 +460,7 @@ function addThumb(file, id, added){
   fig.className = 'thumb';
   fig.innerHTML = `<img src="${url}" alt=""><figcaption></figcaption><span class="del">×</span>`;
   fig.querySelector('figcaption').textContent = file.name;
-  fig.addEventListener('click', ()=> openEditor(file));
+  attachThumbHandlers(fig, item, ()=> openEditor(file));
   fig.querySelector('.del').addEventListener('click', e=>{
     e.stopPropagation();
     if (!confirm('この写真を一覧から削除しますか?\n(端末内の元ファイルは消えません)')) return;
@@ -653,7 +741,7 @@ function buildSubBar(){
       const c = document.createElement('canvas');
       c.width = Math.round(r.w); c.height = Math.round(r.h);
       c.getContext('2d').drawImage(img, r.x, r.y, r.w, r.h, 0, 0, c.width, c.height);
-      img = c; setMode(null); fit(); render(); toast('切り抜きました');
+      img = c; setMode(null); fit(); render();
     });
   }
   if (mode === 'rot90'){
@@ -685,7 +773,7 @@ function buildSubBar(){
       if (Math.abs(freeAngle) < .05){ setMode(null); return; }
       pushHistory();
       img = applyRotation(img, freeAngle*Math.PI/180, freeMode);
-      setMode(null); fit(); render(); toast('回転しました');
+      setMode(null); fit(); render();
     });
   }
   if (mode === 'rect'){
@@ -700,7 +788,7 @@ function buildSubBar(){
       const ctx = img.getContext('2d');
       ctx.fillStyle = rectColor;
       ctx.fillRect(rectSel.x, rectSel.y, rectSel.w, rectSel.h);
-      rectSel = null; ap.disabled = true; render(); toast('塗りつぶしました');
+      rectSel = null; ap.disabled = true; render();
     });
   }
   if (mode === 'pen'){
@@ -733,7 +821,7 @@ function buildSubBar(){
       drawArrowShape(img.getContext('2d'),
         arrowObj.x1, arrowObj.y1, arrowObj.x2, arrowObj.y2,
         arrowObj.width, arrowObj.color);
-      arrowObj = null; ap.disabled = true; render(); toast('矢印を描きました');
+      arrowObj = null; ap.disabled = true; render();
     });
   }
 }
@@ -946,12 +1034,9 @@ $('#saveDo').addEventListener('click', async ()=>{
     src.toBlob(res, fmt==='png' ? 'image/png' : 'image/jpeg', 0.92));
   if (!blob){ toast('保存に失敗しました'); return; }
 
-  if (CapNative){                            // ネイティブ版:元のフォルダへ保存
-    try{
-      const r = await saveNative(blob, name);
-      finishSave();
-      toast('保存しました → ' + (r.relPath || ''));
-    }catch(e){ toast('保存に失敗: ' + ((e && e.message) || e)); }
+  if (CapNative){                            // ネイティブ版:即座に画面を戻し、保存は裏で実行
+    finishSave();
+    saveNative(blob, name).catch(e=> toast('保存に失敗: ' + ((e && e.message) || e)));
     return;
   }
 
@@ -977,7 +1062,6 @@ $('#saveDo').addEventListener('click', async ()=>{
 function finishSave(){
   $('#modalBack').classList.remove('open');
   dirty = false;
-  toast('保存しました');
 }
 
 /* ---------- ネイティブ(Capacitor)連携 ----------
@@ -1029,7 +1113,7 @@ function addNativeThumb(im){
   fig.querySelector('figcaption').textContent = im.name;
   if (thumbObserver){ fig._pb = {im, imgEl}; thumbObserver.observe(fig); }
   else queueThumb(im, imgEl);
-  fig.addEventListener('click', async ()=>{
+  attachThumbHandlers(fig, item, async ()=>{
     toast('読み込み中…');
     try{
       const f = await nativeFileOf(im);
@@ -1037,6 +1121,16 @@ function addNativeThumb(im){
       openEditor(f);
     }catch(e){ toast('読み込み失敗: ' + ((e && e.message) || e)); }
   });
+}
+async function refreshNativeLibrary(){
+  if (!CapNative) return;
+  for (const it of files){
+    try{ if (thumbObserver) thumbObserver.unobserve(it.el); }catch(_){}
+    it.el.remove();
+  }
+  files = [];
+  thumbQueue.length = 0;
+  await initNativeLibrary();
 }
 async function nativeFileOf(im){
   if (im.path){
@@ -1076,6 +1170,26 @@ async function saveNative(blob, name){
   return MediaLib.save({name, mime: blob.type, data: b64, relPath: cur.relPath || ''});
 }
 if (CapNative) initNativeLibrary();
+
+/* ---------- Android戻るボタン: アプリ内の画面を戻る ---------- */
+if (CapNative){
+  const CapApp = window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (CapApp && CapApp.addListener){
+    CapApp.addListener('backButton', ()=>{
+      if ($('#modalBack').classList.contains('open')){        // 保存モーダル → 閉じる
+        $('#modalBack').classList.remove('open');
+        return;
+      }
+      if (selectMode){ exitSelect(); return; }                // 選択モード → 解除
+      if ($('#editorScreen').classList.contains('open')){     // 編集画面 → 一覧へ
+        $('#backBtn').click();
+        return;
+      }
+      if (CapApp.minimizeApp) CapApp.minimizeApp();           // 一覧 → アプリを最小化
+      else if (CapApp.exitApp) CapApp.exitApp();
+    });
+  }
+}
 
 /* ---------- PWA: Service Worker 登録 ---------- */
 if ('serviceWorker' in navigator && !CapNative){
