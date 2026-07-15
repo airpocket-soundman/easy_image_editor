@@ -50,6 +50,8 @@
   .thumb figcaption{position:absolute;left:0;right:0;bottom:0;font-size:9px;padding:3px 6px;
         background:linear-gradient(transparent,rgba(0,0,0,.75));color:#dfe3e8;
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;}
+  .thumb .del{position:absolute;top:4px;right:4px;width:22px;height:22px;border-radius:50%;
+        background:rgba(0,0,0,.55);color:#fff;font-size:15px;line-height:22px;text-align:center;}
   #emptyHint{margin:auto;text-align:center;color:var(--muted);font-size:14px;line-height:1.9;padding:0 32px;}
   #emptyHint .lens{width:64px;height:64px;border-radius:50%;border:2px solid var(--amber);
         margin:0 auto 14px;display:flex;align-items:center;justify-content:center;color:var(--amber);}
@@ -224,23 +226,80 @@ function undo(){
 }
 function baseName(n){ return n.replace(/\.[^.]+$/, ''); }
 
+/* ---------- 写真ライブラリ(IndexedDBに保存し次回起動時に自動復元) ---------- */
+const DB_NAME = 'photobench', DB_STORE = 'photos';
+function idb(){
+  return new Promise((res, rej)=>{
+    const rq = indexedDB.open(DB_NAME, 1);
+    rq.onupgradeneeded = ()=> rq.result.createObjectStore(DB_STORE, {keyPath:'id', autoIncrement:true});
+    rq.onsuccess = ()=> res(rq.result);
+    rq.onerror = ()=> rej(rq.error);
+  });
+}
+function idbAdd(file){
+  return idb().then(db=> new Promise((res, rej)=>{
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    const rq = tx.objectStore(DB_STORE).add({name:file.name, type:file.type, blob:file, added:Date.now()});
+    rq.onsuccess = ()=> res(rq.result);
+    tx.onerror = ()=> rej(tx.error);
+  })).catch(()=> null);
+}
+function idbAll(){
+  return idb().then(db=> new Promise((res, rej)=>{
+    const rq = db.transaction(DB_STORE).objectStore(DB_STORE).getAll();
+    rq.onsuccess = ()=> res(rq.result);
+    rq.onerror = ()=> rej(rq.error);
+  })).catch(()=> []);
+}
+function idbDel(id){
+  return idb().then(db=> new Promise(res=>{
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).delete(id);
+    tx.oncomplete = res; tx.onerror = res;
+  })).catch(()=>{});
+}
+
 /* ---------- 画像一覧 ---------- */
+function addThumb(file, id){
+  $('#emptyHint')?.remove();
+  const url = URL.createObjectURL(file);
+  const item = {file, url, name:file.name, id};
+  files.push(item);
+  const fig = document.createElement('button');
+  fig.className = 'thumb';
+  fig.innerHTML = `<img src="${url}" alt=""><figcaption></figcaption><span class="del">×</span>`;
+  fig.querySelector('figcaption').textContent = file.name;
+  fig.addEventListener('click', ()=> openEditor(file));
+  fig.querySelector('.del').addEventListener('click', e=>{
+    e.stopPropagation();
+    if (!confirm('この写真を一覧から削除しますか?\n(端末内の元ファイルは消えません)')) return;
+    if (id != null) idbDel(id);
+    URL.revokeObjectURL(url);
+    files = files.filter(x=> x !== item);
+    fig.remove();
+  });
+  $('#grid').appendChild(fig);
+}
+async function addFiles(list, save = true){
+  list = list.filter(f=> f.type && f.type.startsWith('image/'));
+  for (const f of list){
+    const id = save ? await idbAdd(f) : null;
+    addThumb(f, id);
+  }
+  return list;
+}
 $('#pickBtn').addEventListener('click', ()=> $('#fileInput').click());
 $('#fileInput').addEventListener('change', e=>{
-  const list = [...e.target.files].filter(f=>f.type.startsWith('image/'));
-  if (!list.length) return;
-  $('#emptyHint')?.remove();
-  for (const f of list){
-    const url = URL.createObjectURL(f);
-    files.push({file:f, url, name:f.name});
-    const fig = document.createElement('button');
-    fig.className = 'thumb';
-    fig.innerHTML = `<img src="${url}" alt=""><figcaption>${f.name}</figcaption>`;
-    fig.addEventListener('click', ()=> openEditor(f));
-    $('#grid').appendChild(fig);
-  }
+  addFiles([...e.target.files]);
   e.target.value = '';
 });
+/* 起動時:保存済みの写真をサムネイル一覧に自動復元 */
+(async ()=>{
+  const rows = await idbAll();
+  for (const r of rows.sort((a,b)=> a.added - b.added)){
+    addThumb(new File([r.blob], r.name, {type: r.type || r.blob.type}), r.id);
+  }
+})();
 
 /* ---------- エディタ起動 ---------- */
 async function loadBitmap(file){
@@ -706,4 +765,47 @@ $('#saveDo').addEventListener('click', async ()=>{
       const w = await h.createWritable();
       await w.write(blob); await w.close();
       finishSave(); return;
-    }catch(err){ i
+    }catch(err){ if (err.name === 'AbortError') return; /* 失敗時はDLへ */ }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  finishSave();
+});
+function finishSave(){
+  $('#modalBack').classList.remove('open');
+  dirty = false;
+  toast('保存しました');
+}
+
+/* ---------- PWA: Service Worker 登録 ---------- */
+if ('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{ /* file://等では無視 */ });
+  });
+}
+
+/* ---------- PWA: 共有ターゲット受信(ギャラリーの「共有」から開く) ---------- */
+(async function loadSharedImages(){
+  const q = new URLSearchParams(location.search);
+  if (!q.has('shared')) return;
+  const n = +q.get('shared') || 0;
+  window.history.replaceState(null, '', location.pathname);
+  const cache = await caches.open('shared-images');
+  const list = [];
+  for (let i = 0; i < n; i++){
+    const res = await cache.match('./shared-' + i);
+    if (!res) continue;
+    const blob = await res.blob();
+    const name = decodeURIComponent(res.headers.get('X-Name') || ('shared-' + i + '.jpg'));
+    list.push(new File([blob], name, {type: blob.type || 'image/jpeg'}));
+    await cache.delete('./shared-' + i);
+  }
+  if (!list.length) return;
+  await addFiles(list);
+  if (list.length === 1) openEditor(list[0]);
+})();
+</script>
+</body>
+</html>
