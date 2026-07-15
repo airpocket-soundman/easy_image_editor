@@ -221,7 +221,7 @@ const MAX_SIDE = 3200;          // メモリ保護のための最大辺
 const HISTORY_MAX = 6;
 
 /* ---------- バージョン表示・エラー可視化・ネイティブ判定(最優先で実行) ---------- */
-const APP_VER = 'v20';
+const APP_VER = 'v21';
 const CapNative = !!(window.Capacitor && (
   (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   window.Capacitor.isNative ||
@@ -455,9 +455,10 @@ $('#selDel').addEventListener('click', async ()=>{
     const ids = items.filter(x=> x.nativeId).map(x=> x.nativeId);
     try{
       await MediaLib.remove({ids});
-      pendingRefresh = true;               // 復帰時に一覧を再取得(キャンセル時も整合)
       exitSelect();
-    }catch(e){ toast('削除に失敗: ' + ((e && e.message) || e)); }
+      items.forEach(removeTile);           // 即座に一覧から消す
+      pendingRefresh = true;               // 復帰時に再同期(ダイアログでキャンセルした場合も整合)
+    }catch(e){ toast('削除に失敗: ' + ((e && e.message) || e), 6000); }
   } else {
     if (!confirm(items.length + '枚を一覧から削除しますか?\n(端末内の元ファイルは消えません)')) return;
     for (const it of items){ if (it.id != null) idbDel(it.id); removeTile(it); }
@@ -1055,10 +1056,12 @@ $('#saveDo').addEventListener('click', async ()=>{
     src.toBlob(res, fmt==='png' ? 'image/png' : 'image/jpeg', 0.92));
   if (!blob){ toast('保存に失敗しました'); return; }
 
-  if (CapNative){                            // ネイティブ版:即座に画面を戻し、保存は裏で実行
+  if (CapNative){                            // ネイティブ版:即座に一覧画面へ戻り、保存は裏で実行
     finishSave();
+    $('#editorScreen').classList.remove('open');   // サムネイル一覧へ戻る
+    img = null; history = [];
     saveNative(blob, name)
-      .then(()=> refreshNativeLibrary())     // 保存した画像を一覧に反映
+      .then(()=> refreshNativeLibrary())     // 保存完了後にサムネイルへ反映
       .catch(e=> toast('保存に失敗: ' + ((e && e.message) || e), 6000));
     return;
   }
@@ -1198,6 +1201,10 @@ if (CapNative) initNativeLibrary();
 if (CapNative){
   const CapApp = window.Capacitor.Plugins && window.Capacitor.Plugins.App;
   if (CapApp && CapApp.addListener){
+    /* システムダイアログ等から復帰したら一覧を再同期 */
+    CapApp.addListener('resume', ()=>{
+      if (pendingRefresh){ pendingRefresh = false; refreshNativeLibrary(); }
+    });
     CapApp.addListener('backButton', ()=>{
       if ($('#modalBack').classList.contains('open')){        // 保存モーダル → 閉じる
         $('#modalBack').classList.remove('open');
