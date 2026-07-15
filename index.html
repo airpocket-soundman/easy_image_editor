@@ -922,8 +922,18 @@ function finishSave(){
 
 /* ---------- ネイティブ(Capacitor)連携 ----------
    APK版では端末内の写真を自動で一覧表示し、元のフォルダへ直接保存する */
-const CapNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const APP_VER = 'v10';
+const CapNative = !!(window.Capacitor && (
+  (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+  window.Capacitor.isNative ||
+  (window.Capacitor.getPlatform && window.Capacitor.getPlatform() !== 'web')
+));
 const MediaLib = CapNative ? window.Capacitor.registerPlugin('MediaLib') : null;
+/* ヘッダーにバージョンと動作モードを表示(動作確認用) */
+{
+  const tag = document.querySelector('header.app span');
+  if (tag) tag.textContent = 'PHOTO BENCH ' + APP_VER + (CapNative ? ' / APK' : ' / Web');
+}
 
 function b64toFile(b64, name, mime){
   const bin = atob(b64);
