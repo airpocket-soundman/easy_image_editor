@@ -64,15 +64,22 @@
         margin:0 auto 14px;display:flex;align-items:center;justify-content:center;color:var(--amber);}
   #pickBar{padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);}
   #pickBtn{width:100%;padding:14px;font-size:16px;}
-  #selBar{display:none;align-items:center;gap:10px;
-          padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line);}
+  /* 選択モード: フローティングバー(スクロールに関係なく画面下部に固定) */
+  #selBar{display:none;position:fixed;left:50%;transform:translateX(-50%);
+          bottom:calc(24px + env(safe-area-inset-bottom));z-index:40;
+          align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);
+          border-radius:99px;padding:10px 14px;box-shadow:0 6px 24px rgba(0,0,0,.55);
+          white-space:nowrap;}
   #selBar.open{display:flex;}
-  #selInfo{flex:1;font-size:14px;color:var(--text);}
-  #selBar button{padding:11px 18px;font-size:14px;}
-  .thumb.sel{outline:3px solid var(--amber);outline-offset:-3px;}
-  .thumb.sel::after{content:'✓';position:absolute;top:4px;left:4px;width:22px;height:22px;
-        border-radius:50%;background:var(--amber);color:#1a1204;font-weight:700;
-        font-size:14px;line-height:22px;text-align:center;}
+  #selInfo{font-size:14px;color:var(--text);padding:0 4px;}
+  #selBar button{padding:10px 18px;font-size:14px;border-radius:99px;}
+  /* 選択モード中は全サムネイルにチェックサークルを表示 */
+  #grid.selecting .thumb::after{content:'';position:absolute;top:6px;left:6px;width:22px;height:22px;
+        border-radius:50%;border:2px solid #fff;background:rgba(0,0,0,.4);box-sizing:border-box;}
+  #grid.selecting .thumb.sel::after{content:'✓';background:var(--amber);border-color:var(--amber);
+        color:#1a1204;font-weight:800;font-size:15px;line-height:18px;text-align:center;}
+  #grid.selecting .thumb.sel{outline:4px solid var(--amber);outline-offset:-4px;}
+  #grid.selecting .thumb.sel img{opacity:.75;}
 
   /* ---------- editor screen ---------- */
   #editorScreen{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;}
@@ -212,7 +219,7 @@ const MAX_SIDE = 3200;          // メモリ保護のための最大辺
 const HISTORY_MAX = 6;
 
 /* ---------- バージョン表示・エラー可視化・ネイティブ判定(最優先で実行) ---------- */
-const APP_VER = 'v17';
+const APP_VER = 'v19';
 const CapNative = !!(window.Capacitor && (
   (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   window.Capacitor.isNative ||
@@ -258,9 +265,9 @@ let arrowObj = null, arrowColor = '#ff3b30', arrowWidth = 8;
 let drag = null;                // ポインタ操作の内部状態
 
 /* ---------- ユーティリティ ---------- */
-function toast(msg){
+function toast(msg, ms){
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(t._tm); t._tm = setTimeout(()=>t.classList.remove('show'), 2600);
+  clearTimeout(t._tm); t._tm = setTimeout(()=>t.classList.remove('show'), ms || 2600);
 }
 function cloneCanvas(c){
   const n = document.createElement('canvas');
@@ -383,6 +390,7 @@ const selected = new Set();
 function enterSelect(item){
   selectMode = true; selected.clear();
   $('#selBar').classList.add('open');
+  $('#grid').classList.add('selecting');
   toggleSel(item);
 }
 function exitSelect(){
@@ -390,6 +398,7 @@ function exitSelect(){
   for (const it of selected) it.el.classList.remove('sel');
   selected.clear();
   $('#selBar').classList.remove('open');
+  $('#grid').classList.remove('selecting');
 }
 function toggleSel(item){
   if (selected.has(item)){ selected.delete(item); item.el.classList.remove('sel'); }
@@ -1036,7 +1045,9 @@ $('#saveDo').addEventListener('click', async ()=>{
 
   if (CapNative){                            // ネイティブ版:即座に画面を戻し、保存は裏で実行
     finishSave();
-    saveNative(blob, name).catch(e=> toast('保存に失敗: ' + ((e && e.message) || e)));
+    saveNative(blob, name)
+      .then(()=> refreshNativeLibrary())     // 保存した画像を一覧に反映
+      .catch(e=> toast('保存に失敗: ' + ((e && e.message) || e), 6000));
     return;
   }
 
