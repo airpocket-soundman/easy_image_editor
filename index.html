@@ -42,6 +42,8 @@
   header.app h1{margin:0;font-size:18px;letter-spacing:.06em;}
   header.app h1 b{color:var(--amber);font-weight:800;}
   header.app span{font-size:11px;color:var(--muted);letter-spacing:.14em;font-family:var(--mono);}
+  #sortSel{margin-left:auto;background:var(--panel2);color:var(--text);border:1px solid var(--line);
+           border-radius:8px;font-size:12px;padding:6px 8px;align-self:center;}
   #grid{flex:1;overflow-y:auto;padding:12px;display:grid;
         grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;align-content:start;}
   .thumb{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;
@@ -111,6 +113,13 @@
 <div id="galleryScreen">
   <header class="app">
     <h1>フォト<b>ベンチ</b></h1><span>PHOTO BENCH</span>
+    <select id="sortSel">
+      <option value="added-desc">追加: 新しい順</option>
+      <option value="added-asc">追加: 古い順</option>
+      <option value="name-asc">名前: A→Z</option>
+      <option value="name-desc">名前: Z→A</option>
+      <option value="mtime-desc">撮影/更新: 新しい順</option>
+    </select>
   </header>
   <div id="grid">
     <div id="emptyHint">
@@ -260,12 +269,38 @@ function idbDel(id){
 }
 
 /* ---------- 画像一覧 ---------- */
-function addThumb(file, id){
+/* 静止画のみ許可(動画・アニメGIF等は除外) */
+const STILL_IMAGE_RE = /^image\/(jpeg|jpg|png|webp|bmp|avif|heic|heif|tiff)$/i;
+
+/* ソート */
+const SORTS = {
+  'added-desc': (a,b)=> b.added - a.added,
+  'added-asc' : (a,b)=> a.added - b.added,
+  'name-asc'  : (a,b)=> a.name.localeCompare(b.name, 'ja'),
+  'name-desc' : (a,b)=> b.name.localeCompare(a.name, 'ja'),
+  'mtime-desc': (a,b)=> b.mtime - a.mtime,
+};
+let sortKey = 'added-desc';
+try{ sortKey = localStorage.getItem('pb-sort') || 'added-desc'; }catch(_){}
+if (!SORTS[sortKey]) sortKey = 'added-desc';
+function renderGrid(){
+  const grid = $('#grid');
+  for (const it of [...files].sort(SORTS[sortKey])) grid.appendChild(it.el);
+}
+$('#sortSel').value = sortKey;
+$('#sortSel').addEventListener('change', ()=>{
+  sortKey = $('#sortSel').value;
+  try{ localStorage.setItem('pb-sort', sortKey); }catch(_){}
+  renderGrid();
+});
+
+function addThumb(file, id, added){
   $('#emptyHint')?.remove();
   const url = URL.createObjectURL(file);
-  const item = {file, url, name:file.name, id};
-  files.push(item);
   const fig = document.createElement('button');
+  const item = {file, url, name:file.name, id,
+                added: added ?? Date.now(), mtime: file.lastModified || 0, el: fig};
+  files.push(item);
   fig.className = 'thumb';
   fig.innerHTML = `<img src="${url}" alt=""><figcaption></figcaption><span class="del">×</span>`;
   fig.querySelector('figcaption').textContent = file.name;
@@ -278,10 +313,13 @@ function addThumb(file, id){
     files = files.filter(x=> x !== item);
     fig.remove();
   });
-  $('#grid').appendChild(fig);
+  renderGrid();
 }
 async function addFiles(list, save = true){
-  list = list.filter(f=> f.type && f.type.startsWith('image/'));
+  const before = list.length;
+  list = list.filter(f=> STILL_IMAGE_RE.test(f.type));
+  const skipped = before - list.length;
+  if (skipped) toast(`静止画以外の ${skipped} 件をスキップしました`);
   for (const f of list){
     const id = save ? await idbAdd(f) : null;
     addThumb(f, id);
@@ -314,8 +352,9 @@ $('#fileInput').addEventListener('change', e=>{
 /* 起動時:保存済みの写真をサムネイル一覧に自動復元 */
 (async ()=>{
   const rows = await idbAll();
-  for (const r of rows.sort((a,b)=> a.added - b.added)){
-    addThumb(new File([r.blob], r.name, {type: r.type || r.blob.type}), r.id);
+  for (const r of rows){
+    addThumb(new File([r.blob], r.name,
+      {type: r.type || r.blob.type, lastModified: r.blob.lastModified || 0}), r.id, r.added);
   }
 })();
 
