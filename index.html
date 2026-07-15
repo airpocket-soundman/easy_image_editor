@@ -189,6 +189,31 @@ const $ = s => document.querySelector(s);
 const MAX_SIDE = 3200;          // メモリ保護のための最大辺
 const HISTORY_MAX = 6;
 
+/* ---------- バージョン表示・エラー可視化・ネイティブ判定(最優先で実行) ---------- */
+const APP_VER = 'v11';
+const CapNative = !!(window.Capacitor && (
+  (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+  window.Capacitor.isNative ||
+  (window.Capacitor.getPlatform && window.Capacitor.getPlatform() !== 'web')
+));
+let MediaLib = null;
+try{
+  if (CapNative){
+    MediaLib = (window.Capacitor.registerPlugin ? window.Capacitor.registerPlugin('MediaLib') : null)
+            || (window.Capacitor.Plugins ? window.Capacitor.Plugins.MediaLib : null) || null;
+  }
+}catch(_){
+  try{ MediaLib = (window.Capacitor.Plugins && window.Capacitor.Plugins.MediaLib) || null; }catch(__){}
+}
+{
+  const tag = document.querySelector('header.app span');
+  if (tag) tag.textContent = 'PHOTO BENCH ' + APP_VER + (CapNative ? ' / APK' : ' / Web');
+}
+/* スクリプトエラーを画面に表示(スマホでの原因調査用) */
+window.addEventListener('error', e=> toast('エラー: ' + (e.message || e.type)));
+window.addEventListener('unhandledrejection', e=>
+  toast('エラー: ' + ((e.reason && e.reason.message) || e.reason || 'unknown')));
+
 /* ---------- 状態 ---------- */
 let files = [];                 // {file, url, name}
 let cur = null;                 // 編集中 {name, type}
@@ -921,20 +946,8 @@ function finishSave(){
 }
 
 /* ---------- ネイティブ(Capacitor)連携 ----------
-   APK版では端末内の写真を自動で一覧表示し、元のフォルダへ直接保存する */
-const APP_VER = 'v10';
-const CapNative = !!(window.Capacitor && (
-  (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
-  window.Capacitor.isNative ||
-  (window.Capacitor.getPlatform && window.Capacitor.getPlatform() !== 'web')
-));
-const MediaLib = CapNative ? window.Capacitor.registerPlugin('MediaLib') : null;
-/* ヘッダーにバージョンと動作モードを表示(動作確認用) */
-{
-  const tag = document.querySelector('header.app span');
-  if (tag) tag.textContent = 'PHOTO BENCH ' + APP_VER + (CapNative ? ' / APK' : ' / Web');
-}
-
+   APK版では端末内の写真を自動で一覧表示し、元のフォルダへ直接保存する
+   (APP_VER / CapNative / MediaLib はスクリプト冒頭で定義済み) */
 function b64toFile(b64, name, mime){
   const bin = atob(b64);
   const u8 = new Uint8Array(bin.length);
@@ -975,6 +988,7 @@ async function nativeFileOf(im){
 async function initNativeLibrary(){
   const bar = $('#pickBar'); if (bar) bar.style.display = 'none';   // ネイティブ版は「写真を選ぶ」廃止
   const hint = $('#emptyHint'); if (hint) hint.textContent = '写真を読み込んでいます…';
+  if (!MediaLib){ toast('ネイティブプラグインを初期化できませんでした'); return; }
   try{
     const r = await MediaLib.list({limit: 500});
     const list = (r.images || []).filter(im=> im.path);

@@ -53,10 +53,18 @@ jobs:
           name: PhotoBench-apk
           path: PhotoBench.apk
 
-      - name: Publish to Releases (latest)
+      - name: Remove old 'latest' release (one-time cleanup)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete latest --cleanup-tag --yes --repo ${{ github.repository }} || true
+
+      - name: Publish to Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: PhotoBench 最新ビルド
-          body: mainブランチの最新コミットから自動ビルドされたAPKです。スマホでダウンロードしてインストールしてください。
+          tag_name: build-${{ github.run_number }}
+          name: PhotoBench Build ${{ github.run_number }}
+          body: |
+            mainブランチの最新コミットから自動ビルドされたAPKです。
+            コミット: ${{ github.sha }}
+            スマホでPhotoBench.apkをダウンロードしてインストールしてください。
           files: PhotoBench.apk
