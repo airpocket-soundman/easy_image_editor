@@ -1,0 +1,15 @@
+{
+  "name": "media-lib",
+  "version": "1.0.0",
+  "description": "フォトベンチ用: 端末の写真一覧・読込・元フォルダへの保存(Android MediaStore)",
+  "main": "index.js",
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "files": [
+    "android/",
+    "index.js"
+  ]
+}

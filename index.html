@@ -361,8 +361,9 @@ $('#fileInput').addEventListener('change', e=>{
   addFiles([...e.target.files]);
   e.target.value = '';
 });
-/* 起動時:保存済みの写真をサムネイル一覧に自動復元 */
+/* 起動時:保存済みの写真をサムネイル一覧に自動復元(Web/PWA版のみ。ネイティブ版は端末から直接一覧) */
 (async ()=>{
+  if (window.Capacitor?.isNativePlatform?.()) return;
   const rows = await idbAll();
   for (const r of rows){
     addThumb(new File([r.blob], r.name,
@@ -394,7 +395,7 @@ async function openEditor(file){
   if (bmp.close) bmp.close();
   if (r < 1) toast(`大きな画像のため ${MAX_SIDE}px に縮小しました`);
 
-  cur = {name:file.name, type:file.type, handle:file._handle || null};
+  cur = {name:file.name, type:file.type, handle:file._handle || null, relPath:file._relPath || null};
   history = []; dirty = false; $('#undoBtn').disabled = true;
   setMode(null);
   $('#fileLabel').textContent = file.name;
@@ -881,6 +882,15 @@ $('#saveDo').addEventListener('click', async ()=>{
     src.toBlob(res, fmt==='png' ? 'image/png' : 'image/jpeg', 0.92));
   if (!blob){ toast('保存に失敗しました'); return; }
 
+  if (CapNative){                            // ネイティブ版:元のフォルダへ保存
+    try{
+      const r = await saveNative(blob, name);
+      finishSave();
+      toast('保存しました → ' + (r.relPath || ''));
+    }catch(_){ toast('保存に失敗しました'); }
+    return;
+  }
+
   if (window.showSaveFilePicker){            // PC版Chrome等:フォルダを選んで保存
     try{
       const opt = {
@@ -906,8 +916,58 @@ function finishSave(){
   toast('保存しました');
 }
 
+/* ---------- ネイティブ(Capacitor)連携 ----------
+   APK版では端末内の写真を自動で一覧表示し、元のフォルダへ直接保存する */
+const CapNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+const MediaLib = CapNative ? window.Capacitor.registerPlugin('MediaLib') : null;
+
+function b64toFile(b64, name, mime){
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new File([u8], name, {type: mime});
+}
+function addNativeThumb(im){
+  $('#emptyHint')?.remove();
+  const fig = document.createElement('button');
+  const item = {nativeId: im.id, name: im.name, added: im.mtime, mtime: im.mtime, el: fig};
+  files.push(item);
+  fig.className = 'thumb';
+  fig.innerHTML = `<img src="data:image/jpeg;base64,${im.thumb}" alt=""><figcaption></figcaption>`;
+  fig.querySelector('figcaption').textContent = im.name;
+  fig.addEventListener('click', async ()=>{
+    toast('読み込み中…');
+    try{
+      const r = await MediaLib.read({id: im.id});
+      const f = b64toFile(r.data, im.name, im.mime || 'image/jpeg');
+      f._relPath = im.relPath || '';
+      openEditor(f);
+    }catch(_){ toast('この画像を読み込めませんでした'); }
+  });
+}
+async function initNativeLibrary(){
+  try{
+    const r = await MediaLib.list({limit: 500});
+    const list = r.images || [];
+    for (const im of list) addNativeThumb(im);
+    renderGrid();
+    if (!list.length) toast('端末に写真が見つかりませんでした');
+  }catch(_){
+    toast('設定アプリで写真へのアクセスを許可してください');
+  }
+}
+async function saveNative(blob, name){
+  const b64 = await new Promise(res=>{
+    const fr = new FileReader();
+    fr.onload = ()=> res(String(fr.result).split(',')[1]);
+    fr.readAsDataURL(blob);
+  });
+  return MediaLib.save({name, mime: blob.type, data: b64, relPath: cur.relPath || ''});
+}
+if (CapNative) initNativeLibrary();
+
 /* ---------- PWA: Service Worker 登録 ---------- */
-if ('serviceWorker' in navigator){
+if ('serviceWorker' in navigator && !CapNative){
   window.addEventListener('load', ()=>{
     navigator.serviceWorker.register('sw.js').catch(()=>{ /* file://等では無視 */ });
   });
