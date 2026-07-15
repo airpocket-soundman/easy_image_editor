@@ -42,13 +42,16 @@
   header.app h1{margin:0;font-size:18px;letter-spacing:.06em;}
   header.app h1 b{color:var(--amber);font-weight:800;}
   header.app span{font-size:11px;color:var(--muted);letter-spacing:.14em;font-family:var(--mono);}
-  #sortBar{display:flex;align-items:center;gap:8px;padding:10px 14px 0;font-size:12px;color:var(--muted);}
+  #sortBar{display:flex;align-items:center;gap:8px;padding:10px 14px 0;font-size:12px;color:var(--muted);
+           flex-wrap:wrap;}
   #sortBar button{padding:6px 13px;font-size:12px;border-radius:99px;}
   #sortBar button.on{background:var(--amber);border-color:var(--amber);color:#1a1204;font-weight:700;}
+  #colLbl{margin-left:auto;}
+  #sortBar .colBtn{padding:6px 11px;}
   #grid{flex:1;overflow-y:auto;padding:12px;display:grid;
-        grid-template-columns:repeat(auto-fill,104px);gap:8px;align-content:start;
+        grid-template-columns:repeat(var(--cols,3),var(--cell,104px));gap:8px;align-content:start;
         justify-content:space-evenly;}
-  .thumb{position:relative;width:104px;height:104px;border-radius:10px;overflow:hidden;
+  .thumb{position:relative;width:var(--cell,104px);height:var(--cell,104px);border-radius:10px;overflow:hidden;
          border:1px solid var(--line);background:var(--panel2);padding:0;}
   .thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
   .thumb figcaption{position:absolute;left:0;right:0;bottom:0;font-size:9px;padding:3px 6px;
@@ -121,6 +124,10 @@
     <button data-f="added" data-label="追加">追加</button>
     <button data-f="name" data-label="名前">名前</button>
     <button data-f="mtime" data-label="日付">日付</button>
+    <span id="colLbl">列:</span>
+    <button class="colBtn" data-c="3">3</button>
+    <button class="colBtn" data-c="4">4</button>
+    <button class="colBtn" data-c="5">5</button>
   </div>
   <div id="grid">
     <div id="emptyHint">
@@ -191,7 +198,7 @@ const MAX_SIDE = 3200;          // メモリ保護のための最大辺
 const HISTORY_MAX = 6;
 
 /* ---------- バージョン表示・エラー可視化・ネイティブ判定(最優先で実行) ---------- */
-const APP_VER = 'v13';
+const APP_VER = 'v14';
 const CapNative = !!(window.Capacitor && (
   (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   window.Capacitor.isNative ||
@@ -317,13 +324,13 @@ function renderGrid(){
   for (const it of [...files].sort(SORTS[sortField + '-' + sortDir])) grid.appendChild(it.el);
 }
 function updateSortBar(){
-  document.querySelectorAll('#sortBar button').forEach(b=>{
+  document.querySelectorAll('#sortBar button[data-f]').forEach(b=>{
     const on = b.dataset.f === sortField;
     b.classList.toggle('on', on);
     b.textContent = b.dataset.label + (on ? (sortDir === 'desc' ? ' ↓' : ' ↑') : '');
   });
 }
-document.querySelectorAll('#sortBar button').forEach(b=> b.addEventListener('click', ()=>{
+document.querySelectorAll('#sortBar button[data-f]').forEach(b=> b.addEventListener('click', ()=>{
   const f = b.dataset.f;
   if (f === sortField) sortDir = (sortDir === 'desc') ? 'asc' : 'desc';
   else { sortField = f; sortDir = (f === 'name') ? 'asc' : 'desc'; }
@@ -331,6 +338,29 @@ document.querySelectorAll('#sortBar button').forEach(b=> b.addEventListener('cli
   updateSortBar(); renderGrid();
 }));
 updateSortBar();
+
+/* 列数切替(マスのサイズは表示エリア幅から自動計算) */
+let gridCols = 3;
+try{ gridCols = parseInt(localStorage.getItem('pb-cols'), 10) || 3; }catch(_){}
+if (gridCols < 3 || gridCols > 5) gridCols = 3;
+function updateGridCells(){
+  const grid = $('#grid');
+  const cs = getComputedStyle(grid);
+  const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+  const gap = 8;
+  const w = grid.clientWidth - pad;
+  const cell = Math.max(60, Math.floor((w - gap * (gridCols - 1)) / gridCols));
+  grid.style.setProperty('--cols', gridCols);
+  grid.style.setProperty('--cell', cell + 'px');
+  document.querySelectorAll('.colBtn').forEach(b=> b.classList.toggle('on', +b.dataset.c === gridCols));
+}
+document.querySelectorAll('.colBtn').forEach(b=> b.addEventListener('click', ()=>{
+  gridCols = +b.dataset.c;
+  try{ localStorage.setItem('pb-cols', gridCols); }catch(_){}
+  updateGridCells();
+}));
+window.addEventListener('resize', updateGridCells);
+updateGridCells();
 
 function addThumb(file, id, added){
   $('#emptyHint')?.remove();
