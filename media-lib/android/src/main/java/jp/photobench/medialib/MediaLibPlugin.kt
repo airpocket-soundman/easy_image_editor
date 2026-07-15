@@ -3,9 +3,12 @@ package jp.photobench.medialib
 import android.Manifest
 import android.content.ContentUris
 import android.content.ContentValues
+import android.graphics.Bitmap
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Base64
+import android.util.Size
+import java.io.ByteArrayOutputStream
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -95,6 +98,30 @@ class MediaLibPlugin : Plugin() {
         val ret = JSObject()
         ret.put("images", images)
         call.resolve(ret)
+    }
+
+    /* ---------- サムネイル1枚生成(表示範囲のみ順次呼ばれる) ---------- */
+    @PluginMethod
+    fun thumb(call: PluginCall) {
+        val id = call.getString("id")
+        if (id == null) {
+            call.reject("id が必要です")
+            return
+        }
+        val size = call.getInt("size") ?: 256
+        try {
+            val uri = ContentUris.withAppendedId(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id.toLong()
+            )
+            val bmp = context.contentResolver.loadThumbnail(uri, Size(size, size), null)
+            val bos = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 70, bos)
+            val ret = JSObject()
+            ret.put("data", Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP))
+            call.resolve(ret)
+        } catch (e: Exception) {
+            call.reject("サムネイル生成エラー: " + e.message)
+        }
     }
 
     /* ---------- 1枚読み込み(フル解像度・フォールバック用) ---------- */

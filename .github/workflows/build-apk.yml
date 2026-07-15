@@ -35,6 +35,16 @@ jobs:
       - name: Set minSdk 29
         run: sed -i "s/minSdkVersion = .*/minSdkVersion = 29/" android/variables.gradle
 
+      - name: Generate app icons (Web版と同じデザイン)
+        run: >
+          npx --yes @capacitor/assets generate --android
+          --assetPath assets
+          --iconBackgroundColor '#141619'
+          --iconBackgroundColorDark '#141619'
+          --splashBackgroundColor '#141619'
+          --splashBackgroundColorDark '#141619'
+          || echo "icon generation skipped"
+
       - name: Build release APK (unsigned)
         run: cd android && ./gradlew assembleRelease --no-daemon
 

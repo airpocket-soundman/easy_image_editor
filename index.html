@@ -47,9 +47,10 @@
   #sortBar button.on{background:var(--amber);border-color:var(--amber);color:#1a1204;font-weight:700;}
   #grid{flex:1;overflow-y:auto;padding:12px;display:grid;
         grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px;align-content:start;}
-  .thumb{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;
+  .thumb{position:relative;border-radius:10px;overflow:hidden;
          border:1px solid var(--line);background:var(--panel);padding:0;}
-  .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .thumb::before{content:'';display:block;padding-top:100%;}   /* 正方形を保証 */
+  .thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block;}
   .thumb figcaption{position:absolute;left:0;right:0;bottom:0;font-size:9px;padding:3px 6px;
         background:linear-gradient(transparent,rgba(0,0,0,.75));color:#dfe3e8;
         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;}
@@ -190,7 +191,7 @@ const MAX_SIDE = 3200;          // メモリ保護のための最大辺
 const HISTORY_MAX = 6;
 
 /* ---------- バージョン表示・エラー可視化・ネイティブ判定(最優先で実行) ---------- */
-const APP_VER = 'v11';
+const APP_VER = 'v12';
 const CapNative = !!(window.Capacitor && (
   (window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   window.Capacitor.isNative ||
@@ -954,15 +955,46 @@ function b64toFile(b64, name, mime){
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   return new File([u8], name, {type: mime});
 }
+/* サムネイルは「画面に見えている範囲+周辺600px」だけを、同時3件までで順次生成する */
+const thumbQueue = [];
+let thumbBusy = 0;
+function queueThumb(im, imgEl){
+  thumbQueue.push({im, imgEl});
+  pumpThumbs();
+}
+function pumpThumbs(){
+  while (thumbBusy < 3 && thumbQueue.length){
+    const {im, imgEl} = thumbQueue.shift();
+    thumbBusy++;
+    MediaLib.thumb({id: im.id, size: 256})
+      .then(r=>{ imgEl.src = 'data:image/jpeg;base64,' + r.data; })
+      .catch(()=>{})
+      .finally(()=>{ thumbBusy--; pumpThumbs(); });
+  }
+}
+const thumbObserver = ('IntersectionObserver' in window)
+  ? new IntersectionObserver(entries=>{
+      for (const en of entries){
+        if (en.isIntersecting){
+          thumbObserver.unobserve(en.target);
+          const d = en.target._pb;
+          if (d) queueThumb(d.im, d.imgEl);
+        }
+      }
+    }, {rootMargin: '600px'})
+  : null;
+
 function addNativeThumb(im){
   $('#emptyHint')?.remove();
   const fig = document.createElement('button');
   const item = {nativeId: im.id, name: im.name, added: im.mtime, mtime: im.mtime, el: fig};
   files.push(item);
   fig.className = 'thumb';
-  fig.innerHTML = `<img loading="lazy" alt=""><figcaption></figcaption>`;
-  fig.querySelector('img').src = window.Capacitor.convertFileSrc(im.path);
+  fig.innerHTML = `<img alt=""><figcaption></figcaption>`;
+  const imgEl = fig.querySelector('img');
   fig.querySelector('figcaption').textContent = im.name;
+  if (thumbObserver){ fig._pb = {im, imgEl}; thumbObserver.observe(fig); }
+  else queueThumb(im, imgEl);
   fig.addEventListener('click', async ()=>{
     toast('読み込み中…');
     try{
