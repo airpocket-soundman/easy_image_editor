@@ -1,7 +1,7 @@
 /* フォトベンチ Service Worker
    キャッシュ更新時は CACHE_VERSION を上げること */
 'use strict';
-const CACHE_VERSION = 'photobench-v4';
+const CACHE_VERSION = 'photobench-v5';
 const ASSETS = [
   './',
   './index.html',

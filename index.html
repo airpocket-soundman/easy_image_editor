@@ -432,6 +432,8 @@ function render(){
     vctx.strokeStyle = '#fff'; vctx.setLineDash([6,4]);
     vctx.strokeRect(a.x, a.y, rectSel.w*scale, rectSel.h*scale);
     vctx.setLineDash([]);
+    if (rectSel.w > 0 && rectSel.h > 0)
+      for (const c of rectCorners()) handleDot(i2s(c), true);
   }
   if (mode === 'arrow' && arrowObj){
     const p1 = i2s({x:arrowObj.x1,y:arrowObj.y1}), p2 = i2s({x:arrowObj.x2,y:arrowObj.y2});
@@ -576,7 +578,7 @@ function buildSubBar(){
   }
   if (mode === 'rect'){
     const col = add(el(`<input type="color" value="${rectColor}">`));
-    add(el('<span class="lbl">ドラッグで矩形を指定</span>'));
+    add(el('<span class="lbl">ドラッグで矩形を指定(四隅・辺で調整)</span>'));
     const ap = add(el('<button class="primary" disabled>塗りつぶす</button>'));
     col.addEventListener('input', ()=>{ rectColor = col.value; render(); });
     ap.id = 'rectApply';
@@ -602,7 +604,7 @@ function buildSubBar(){
   if (mode === 'arrow'){
     const col = add(el(`<input type="color" value="${arrowColor}">`));
     add(el('<span class="lbl">太さ</span>'));
-    const sl = add(el(`<input type="range" min="2" max="40" value="${arrowWidth}" style="width:110px">`));
+    const sl = add(el(`<input type="range" min="2" max="120" value="${arrowWidth}" style="width:110px">`));
     const ap = add(el('<button class="primary" disabled>確定</button>'));
     ap.id = 'arrowApply';
     col.addEventListener('input', ()=>{
@@ -629,6 +631,10 @@ function cropCorners(){
   const r = cropRect;
   return [{x:r.x,y:r.y},{x:r.x+r.w,y:r.y},{x:r.x,y:r.y+r.h},{x:r.x+r.w,y:r.y+r.h}];
 }
+function rectCorners(){
+  const r = rectSel;
+  return [{x:r.x,y:r.y},{x:r.x+r.w,y:r.y},{x:r.x,y:r.y+r.h},{x:r.x+r.w,y:r.y+r.h}];
+}
 function pos(e){
   const b = view.getBoundingClientRect();
   return {x: e.clientX - b.left, y: e.clientY - b.top};
@@ -639,6 +645,22 @@ const distToSeg = (p,a,b)=>{
   t = Math.max(0,Math.min(1,t));
   return Math.hypot(p.x-(a.x+dx*t), p.y-(a.y+dy*t));
 };
+function hitEdge(corners, sp){        // 0:上 1:下 2:左 3:右 / corners=[左上,右上,左下,右下](画像座標)
+  const [tl,tr,bl,br] = corners.map(i2s);
+  if (distToSeg(sp, tl, tr) < 14) return 0;
+  if (distToSeg(sp, bl, br) < 14) return 1;
+  if (distToSeg(sp, tl, bl) < 14) return 2;
+  if (distToSeg(sp, tr, br) < 14) return 3;
+  return -1;
+}
+function edgeResize(r, edge, ip){     // 指定した辺だけ動かす(反対側は固定)
+  let x1=r.x, y1=r.y, x2=r.x+r.w, y2=r.y+r.h;
+  if (edge===0) y1 = ip.y;
+  if (edge===1) y2 = ip.y;
+  if (edge===2) x1 = ip.x;
+  if (edge===3) x2 = ip.x;
+  return {x:Math.min(x1,x2), y:Math.min(y1,y2), w:Math.abs(x2-x1), h:Math.abs(y2-y1)};
+}
 
 view.addEventListener('pointerdown', e=>{
   if (!img || !mode || mode==='free' || mode==='rot90') return;
@@ -652,12 +674,28 @@ view.addEventListener('pointerdown', e=>{
       const c = i2s(cs[i]);
       if (Math.hypot(sp.x-c.x, sp.y-c.y) < 20){ drag = {kind:'corner', i, id:e.pointerId}; return; }
     }
+    const ce = hitEdge(cs, sp);
+    if (ce >= 0){ drag = {kind:'edge', edge:ce, id:e.pointerId}; return; }
     const a = i2s({x:cropRect.x,y:cropRect.y});
     if (sp.x>a.x && sp.x<a.x+cropRect.w*scale && sp.y>a.y && sp.y<a.y+cropRect.h*scale)
       drag = {kind:'move', id:e.pointerId, start:ip, orig:{...cropRect}};
     return;
   }
   if (mode === 'rect'){
+    if (rectSel && rectSel.w > 0 && rectSel.h > 0){
+      const cs = rectCorners();
+      for (let i=0;i<4;i++){
+        const c = i2s(cs[i]);
+        if (Math.hypot(sp.x-c.x, sp.y-c.y) < 20){ drag = {kind:'rect-corner', i, id:e.pointerId}; return; }
+      }
+      const re = hitEdge(cs, sp);
+      if (re >= 0){ drag = {kind:'rect-edge', edge:re, id:e.pointerId}; return; }
+      const a = i2s({x:rectSel.x,y:rectSel.y});
+      if (sp.x>a.x && sp.x<a.x+rectSel.w*scale && sp.y>a.y && sp.y<a.y+rectSel.h*scale){
+        drag = {kind:'rect-move', id:e.pointerId, start:ip, orig:{...rectSel}};
+        return;
+      }
+    }
     drag = {kind:'rect', id:e.pointerId, start:ip};
     rectSel = {x:ip.x, y:ip.y, w:0, h:0};
     return;
@@ -712,6 +750,23 @@ view.addEventListener('pointermove', e=>{
       w: Math.abs(ip.x-drag.start.x), h: Math.abs(ip.y-drag.start.y)
     };
   }
+  else if (drag.kind === 'edge'){ cropRect = edgeResize(cropRect, drag.edge, ip); }
+  else if (drag.kind === 'rect-edge'){ rectSel = edgeResize(rectSel, drag.edge, ip); }
+  else if (drag.kind === 'rect-corner'){
+    const cs = rectCorners();
+    const opp = cs[3-drag.i];                       // 対角を固定
+    rectSel = {
+      x: Math.min(ip.x, opp.x), y: Math.min(ip.y, opp.y),
+      w: Math.abs(ip.x-opp.x), h: Math.abs(ip.y-opp.y)
+    };
+  }
+  else if (drag.kind === 'rect-move'){
+    let nx = drag.orig.x + (ip.x - drag.start.x);
+    let ny = drag.orig.y + (ip.y - drag.start.y);
+    nx = Math.max(0, Math.min(nx, img.width - drag.orig.w));
+    ny = Math.max(0, Math.min(ny, img.height - drag.orig.h));
+    rectSel = {x:nx, y:ny, w:drag.orig.w, h:drag.orig.h};
+  }
   else if (drag.kind === 'pen'){
     const ctx = penScratch.getContext('2d');
     ctx.beginPath();
@@ -736,7 +791,7 @@ function pointerEnd(e){
     img.getContext('2d').drawImage(penScratch, 0, 0);
     penScratch.getContext('2d').clearRect(0,0,penScratch.width,penScratch.height);
   }
-  if (drag.kind === 'rect'){
+  if (drag.kind.startsWith('rect')){
     const b = $('#rectApply');
     if (b) b.disabled = !(rectSel && rectSel.w>1 && rectSel.h>1);
   }
