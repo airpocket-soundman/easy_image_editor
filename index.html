@@ -288,7 +288,25 @@ async function addFiles(list, save = true){
   }
   return list;
 }
-$('#pickBtn').addEventListener('click', ()=> $('#fileInput').click());
+$('#pickBtn').addEventListener('click', async ()=>{
+  if (window.showOpenFilePicker){   // PC版Chrome等:元フォルダを記憶できる方式
+    try{
+      const handles = await showOpenFilePicker({
+        multiple: true,
+        types: [{description:'画像', accept:{'image/*':['.png','.jpg','.jpeg','.webp','.gif','.bmp']}}]
+      });
+      const list = [];
+      for (const h of handles){
+        const f = await h.getFile();
+        f._handle = h;              // 保存時に元フォルダを初期表示するために保持
+        list.push(f);
+      }
+      addFiles(list);
+      return;
+    }catch(err){ if (err && err.name === 'AbortError') return; /* 失敗時は従来方式へ */ }
+  }
+  $('#fileInput').click();
+});
 $('#fileInput').addEventListener('change', e=>{
   addFiles([...e.target.files]);
   e.target.value = '';
@@ -325,7 +343,7 @@ async function openEditor(file){
   if (bmp.close) bmp.close();
   if (r < 1) toast(`大きな画像のため ${MAX_SIDE}px に縮小しました`);
 
-  cur = {name:file.name, type:file.type};
+  cur = {name:file.name, type:file.type, handle:file._handle || null};
   history = []; dirty = false; $('#undoBtn').disabled = true;
   setMode(null);
   $('#fileLabel').textContent = file.name;
@@ -428,25 +446,25 @@ function normAngle(rad){
   if (a > Math.PI/2) a = Math.PI - a;
   return a;
 }
-function outerSize(w,h,rad){
+function bboxSize(w,h,rad){           // 回転画像の外接バウンディングボックス(90°回転用)
   const a = normAngle(rad), s=Math.sin(a), c=Math.cos(a);
   return {w: w*c + h*s, h: w*s + h*c};
 }
-function innerSize(w,h,rad){          // 回転画像に内接する最大の軸平行矩形
-  const a = normAngle(rad);
-  if (a < 1e-6) return {w,h};
-  const s=Math.sin(a), c=Math.cos(a);
-  const longer=Math.max(w,h), shorter=Math.min(w,h);
-  if (shorter <= 2*s*c*longer || Math.abs(s-c) < 1e-9){
-    const x = shorter/2;
-    return (w>=h) ? {w:x/s, h:x/c} : {w:x/c, h:x/s};
-  }
-  const cos2a = c*c - s*s;
-  return {w:(w*c - h*s)/cos2a, h:(h*c - w*s)/cos2a};
+function outerSize(w,h,rad){          // 全体を含む、元画像と同じ縦横比の最小矩形
+  const a = normAngle(rad), s=Math.sin(a), c=Math.cos(a);
+  const K = Math.max((w*c + h*s)/w, (w*s + h*c)/h);
+  return {w: w*K, h: h*K};
+}
+function innerSize(w,h,rad){          // 回転画像に内接する、元画像と同じ縦横比の最大矩形
+  const a = normAngle(rad), s=Math.sin(a), c=Math.cos(a);
+  const k = Math.min(w/(w*c + h*s), h/(w*s + h*c));
+  return {w: w*k, h: h*k};
 }
 function applyRotation(src, rad, fitMode){
   const w = src.width, h = src.height;
-  const sz = (fitMode==='outer') ? outerSize(w,h,rad) : innerSize(w,h,rad);
+  const sz = (fitMode==='bbox')  ? bboxSize(w,h,rad)
+           : (fitMode==='outer') ? outerSize(w,h,rad)
+           : innerSize(w,h,rad);
   const c = document.createElement('canvas');
   c.width = Math.max(1, Math.round(sz.w));
   c.height = Math.max(1, Math.round(sz.h));
@@ -455,6 +473,7 @@ function applyRotation(src, rad, fitMode){
   ctx.translate(c.width/2, c.height/2);
   ctx.rotate(rad);
   ctx.drawImage(src, -w/2, -h/2);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);   // 変換をリセット(以後の描画がずれないように)
   return c;
 }
 function renderFreePreview(){
@@ -528,7 +547,7 @@ function buildSubBar(){
   if (mode === 'rot90'){
     const l = add(el('<button>↺ 左に90°</button>'));
     const r = add(el('<button>↻ 右に90°</button>'));
-    const rot = d => { pushHistory(); img = applyRotation(img, d*Math.PI/2, 'outer'); fit(); render(); };
+    const rot = d => { pushHistory(); img = applyRotation(img, d*Math.PI/2, 'bbox'); fit(); render(); };
     l.addEventListener('click', ()=>rot(-1));
     r.addEventListener('click', ()=>rot(1));
   }
@@ -758,10 +777,12 @@ $('#saveDo').addEventListener('click', async ()=>{
 
   if (window.showSaveFilePicker){            // PC版Chrome等:フォルダを選んで保存
     try{
-      const h = await showSaveFilePicker({
+      const opt = {
         suggestedName: name,
         types:[{description:'画像', accept:{[blob.type]:[fmt==='png'?'.png':'.jpg']}}]
-      });
+      };
+      if (cur.handle) opt.startIn = cur.handle;   // 元ファイルのフォルダを初期表示
+      const h = await showSaveFilePicker(opt);
       const w = await h.createWritable();
       await w.write(blob); await w.close();
       finishSave(); return;
