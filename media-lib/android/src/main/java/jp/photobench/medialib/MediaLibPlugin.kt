@@ -3,11 +3,9 @@ package jp.photobench.medialib
 import android.Manifest
 import android.content.ContentUris
 import android.content.ContentValues
-import android.graphics.Bitmap
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Base64
-import android.util.Size
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
@@ -17,7 +15,6 @@ import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
-import java.io.ByteArrayOutputStream
 
 @CapacitorPlugin(
     name = "MediaLib",
@@ -31,7 +28,7 @@ class MediaLibPlugin : Plugin() {
     private fun photoAlias(): String =
         if (Build.VERSION.SDK_INT >= 33) "photos13" else "photos"
 
-    /* ---------- 写真一覧(サムネイル付き) ---------- */
+    /* ---------- 写真一覧(ファイルパス付き・高速) ---------- */
     @PluginMethod
     fun list(call: PluginCall) {
         if (getPermissionState(photoAlias()) != PermissionState.GRANTED) {
@@ -50,6 +47,7 @@ class MediaLibPlugin : Plugin() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun doList(call: PluginCall) {
         val limit = call.getInt("limit") ?: 300
         val resolver = context.contentResolver
@@ -58,7 +56,8 @@ class MediaLibPlugin : Plugin() {
             MediaStore.Images.Media.DISPLAY_NAME,
             MediaStore.Images.Media.DATE_MODIFIED,
             MediaStore.Images.Media.RELATIVE_PATH,
-            MediaStore.Images.Media.MIME_TYPE
+            MediaStore.Images.Media.MIME_TYPE,
+            MediaStore.Images.Media.DATA
         )
         val images = JSArray()
         try {
@@ -72,30 +71,19 @@ class MediaLibPlugin : Plugin() {
                 val iDate = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
                 val iPath = c.getColumnIndexOrThrow(MediaStore.Images.Media.RELATIVE_PATH)
                 val iMime = c.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
+                val iData = c.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
                 var n = 0
                 while (c.moveToNext() && n < limit) {
                     val mime = c.getString(iMime) ?: ""
                     // 静止画のみ(GIF・動画は除外)
                     if (!mime.startsWith("image/") || mime == "image/gif") continue
-                    val id = c.getLong(iId)
-                    val uri = ContentUris.withAppendedId(
-                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
-                    )
-                    val thumb = try {
-                        val bmp = resolver.loadThumbnail(uri, Size(256, 256), null)
-                        val bos = ByteArrayOutputStream()
-                        bmp.compress(Bitmap.CompressFormat.JPEG, 70, bos)
-                        Base64.encodeToString(bos.toByteArray(), Base64.NO_WRAP)
-                    } catch (e: Exception) {
-                        null
-                    } ?: continue
                     val o = JSObject()
-                    o.put("id", id.toString())
+                    o.put("id", c.getLong(iId).toString())
                     o.put("name", c.getString(iName) ?: "photo.jpg")
                     o.put("mtime", c.getLong(iDate) * 1000)
                     o.put("relPath", c.getString(iPath) ?: "")
                     o.put("mime", mime)
-                    o.put("thumb", thumb)
+                    o.put("path", c.getString(iData) ?: "")
                     images.put(o)
                     n++
                 }
@@ -109,7 +97,7 @@ class MediaLibPlugin : Plugin() {
         call.resolve(ret)
     }
 
-    /* ---------- 1枚読み込み(フル解像度) ---------- */
+    /* ---------- 1枚読み込み(フル解像度・フォールバック用) ---------- */
     @PluginMethod
     fun read(call: PluginCall) {
         val id = call.getString("id")

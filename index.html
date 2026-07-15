@@ -861,6 +861,10 @@ view.addEventListener('pointercancel', pointerEnd);
 $('#saveBtn').addEventListener('click', ()=>{
   $('#saveName').value = baseName(cur.name) + '_edited';
   $('#saveFmt').value = (cur.type === 'image/png') ? 'png' : 'jpeg';
+  if (CapNative){
+    const dst = cur.relPath || 'Pictures/PhotoBench';
+    $('#saveNote').textContent = '保存先: ' + dst + ' (元の写真と同じフォルダに新しいファイルとして保存します。元の写真は上書きされません)';
+  }
   $('#modalBack').classList.add('open');
 });
 $('#saveCancel').addEventListener('click', ()=> $('#modalBack').classList.remove('open'));
@@ -887,7 +891,7 @@ $('#saveDo').addEventListener('click', async ()=>{
       const r = await saveNative(blob, name);
       finishSave();
       toast('保存しました → ' + (r.relPath || ''));
-    }catch(_){ toast('保存に失敗しました'); }
+    }catch(e){ toast('保存に失敗: ' + ((e && e.message) || e)); }
     return;
   }
 
@@ -933,27 +937,44 @@ function addNativeThumb(im){
   const item = {nativeId: im.id, name: im.name, added: im.mtime, mtime: im.mtime, el: fig};
   files.push(item);
   fig.className = 'thumb';
-  fig.innerHTML = `<img src="data:image/jpeg;base64,${im.thumb}" alt=""><figcaption></figcaption>`;
+  fig.innerHTML = `<img loading="lazy" alt=""><figcaption></figcaption>`;
+  fig.querySelector('img').src = window.Capacitor.convertFileSrc(im.path);
   fig.querySelector('figcaption').textContent = im.name;
   fig.addEventListener('click', async ()=>{
     toast('読み込み中…');
     try{
-      const r = await MediaLib.read({id: im.id});
-      const f = b64toFile(r.data, im.name, im.mime || 'image/jpeg');
+      const f = await nativeFileOf(im);
       f._relPath = im.relPath || '';
       openEditor(f);
-    }catch(_){ toast('この画像を読み込めませんでした'); }
+    }catch(e){ toast('読み込み失敗: ' + ((e && e.message) || e)); }
   });
 }
+async function nativeFileOf(im){
+  if (im.path){
+    try{
+      const res = await fetch(window.Capacitor.convertFileSrc(im.path));
+      if (res.ok){
+        const blob = await res.blob();
+        return new File([blob], im.name, {type: im.mime || blob.type || 'image/jpeg'});
+      }
+    }catch(_){ /* プラグイン経由にフォールバック */ }
+  }
+  const r = await MediaLib.read({id: im.id});
+  return b64toFile(r.data, im.name, im.mime || 'image/jpeg');
+}
 async function initNativeLibrary(){
+  const bar = $('#pickBar'); if (bar) bar.style.display = 'none';   // ネイティブ版は「写真を選ぶ」廃止
+  const hint = $('#emptyHint'); if (hint) hint.textContent = '写真を読み込んでいます…';
   try{
     const r = await MediaLib.list({limit: 500});
-    const list = r.images || [];
+    const list = (r.images || []).filter(im=> im.path);
     for (const im of list) addNativeThumb(im);
     renderGrid();
     if (!list.length) toast('端末に写真が見つかりませんでした');
-  }catch(_){
-    toast('設定アプリで写真へのアクセスを許可してください');
+  }catch(e){
+    toast('写真にアクセスできません: ' + ((e && e.message) || e));
+    const h = $('#emptyHint');
+    if (h) h.textContent = '設定 → アプリ → フォトベンチ → 権限 で「写真と動画」を許可して、アプリを開き直してください。';
   }
 }
 async function saveNative(blob, name){
